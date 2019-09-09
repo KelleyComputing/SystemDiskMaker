@@ -17,16 +17,78 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 
-# Disk argument is passed in as $1 - e.g., "disk2"
-DISK="$1"
+check_root() {
+    if [ `whoami` != "root" ]; then
+        echo "Error: insufficient permissions - this script must be executed as root!"
+		usage
+		exit 1
+    fi
+}
 
+
+usage()
+{
+cat << EOF
+usage: $0 [ -f ] [ -v ] [ -p /path/to/installers ] -d diskIdentifier"
+
+This script will create multiple bootable Mac OS X / macOS volumes on a single disk.
+The script looks for installer images at the specified path (or in /Applications by default).
+
+OPTIONS:
+   -d      Whole disk identifier to create partitions on
+   -f      Force (do not prompt for confirmation)
+   -h      Show this message
+   -p      Path to installer location containing installer images (default is /Applications)
+   -v      Verbose
+
+EXAMPLES:
+
+    Create an installer disk on physical disk "disk1" using system installers found in the default location
+	$0 -d disk1
+
+    Create an installer on disk1 from installers at /Volumes/Storage/Applications (verbosely)
+	$0 -v -d disk1 -p /Volumes/Storage/Applications
+EOF
+}
+
+
+while getopts  "d:fhp:v" flag
+do
+	if [ "$flag" == "h" ]; then
+		usage
+		exit
+	elif [ "$flag" == "p" ]; then
+		OS_INSTALLER_BASE_PATH="$OPTARG"
+	elif [ "$flag" == "f" ]; then
+		FORCE="YES"
+	elif [ "$flag" == "v" ]; then
+		VERBOSE="YES"
+	elif [ "$flag" == "d" ]; then
+		if [ -z "$flag" ]; then
+			echo "Error: option:$flag requires an argument"
+			usage
+			exit 1
+		else
+			DISK="$OPTARG"
+		fi
+	elif [ "$flag" == "?" ]; then
+		usage
+		exit
+	fi
+done
+
+
+# verify that the script is being executed with privileges
+check_root
+
+# verify that a disk argument is being provided
 if [ -z "$DISK" ]; then
-	echo "Error: it is necessary to specify a whole disk (e.g., \"disk2\" as the first program argument!"
+	echo "Error: it is necessary to specify a whole disk (e.g., \"disk2\") using the '-d' argument!"
+	usage
 	exit 1
 fi
 
-OS_INSTALLER_BASE_PATH="$2"
-
+# verify that the OS_INSTALLER_BASE_PATH actually exists
 if [ -z "$OS_INSTALLER_BASE_PATH" ]; then
 	# OS_INSTALLER_BASE_PATH is the location that the installation applications are
 	# stored. For example "/Applications", "/Volumes/Storage/OS Installers", etc.
@@ -101,4 +163,4 @@ asr --source "$OS_INSTALLER_BASE_PATH/Install OS X Mountain Lion.app/Contents/Sh
 "$OS_INSTALLER_BASE_PATH/Install macOS High Sierra.app/Contents/Resources/createinstallmedia" --applicationpath "$OS_INSTALLER_BASE_PATH/Install macOS High Sierra.app" --volume "/Volumes/$PARTITION7_NAME" --nointeraction
 
 # macOS v.10.14 ("Mojave")
-"$OS_INSTALLER_BASE_PATH/Install macOS Mojave.app/Contents/Resources/createinstallmedia" --applicationpath "$OS_INSTALLER_BASE_PATH/Install macOS Mojave.app" --volume "/Volumes/$PARTITION8_NAME" --nointeraction
+"$OS_INSTALLER_BASE_PATH/Install macOS Mojave.app/Contents/Resources/createinstallmedia" --volume "/Volumes/$PARTITION8_NAME" --nointeraction
