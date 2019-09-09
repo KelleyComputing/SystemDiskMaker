@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-#	SystemDiskMaker automates the creation of multiple bootable Mac OS X / macOS volumes on a single disk
+#    SystemDiskMaker automates the creation of multiple bootable Mac OS X / macOS volumes on a single disk
 #    Copyright (C) 2019  Kelley Computing
 #
 #    This program is free software: you can redistribute it and/or modify
@@ -20,19 +20,23 @@
 # Disk argument is passed in as $1 - e.g., "disk2"
 DISK="$1"
 
+if [ -z "$DISK" ]; then
+	echo "Error: it is necessary to specify a whole disk (e.g., \"disk2\" as the first program argument!"
+	exit 1
+fi
+
 OS_INSTALLER_BASE_PATH="$2"
 
 if [ -z "$OS_INSTALLER_BASE_PATH" ]; then
 	# OS_INSTALLER_BASE_PATH is the location that the installation applications are
 	# stored. For example "/Applications", "/Volumes/Storage/OS Installers", etc.
 	#
-	# OS_INSTALLER_BASE_PATH="/Volumes/Storage/Shared Items/Software/OS Installers"
 	OS_INSTALLER_BASE_PATH="/Applications"
 fi
 
 # NUMBER_OF_PARTITIONS is the number of partitions to create on disk.
 # This should equal the number of system images that are being created + 1.
-NUMBER_OF_PARTITIONS=8
+NUMBER_OF_PARTITIONS=9
 
 # PARTITION_FORMAT is the format that each partition will be intialized in.
 # At this time, there is only 1 format that will be used (jhfs+), which is
@@ -48,6 +52,7 @@ PARTITION4_NAME=`uuidgen`
 PARTITION5_NAME=`uuidgen`
 PARTITION6_NAME=`uuidgen`
 PARTITION7_NAME=`uuidgen`
+PARTITION8_NAME=`uuidgen`
 STORAGE_PARTITION_NAME="Storage"
 
 # Each partition must have a size specified - 10GB is sufficient for each
@@ -67,6 +72,7 @@ diskutil partitionDisk "/dev/$DISK" "$NUMBER_OF_PARTITIONS" GPTFormat \
 "$PARTITION_FORMAT" "$PARTITION5_NAME" "$PARTITION_SIZE" \
 "$PARTITION_FORMAT" "$PARTITION6_NAME" "$PARTITION_SIZE" \
 "$PARTITION_FORMAT" "$PARTITION7_NAME" "$PARTITION_SIZE" \
+"$PARTITION_FORMAT" "$PARTITION8_NAME" "$PARTITION_SIZE" \
 "$PARTITION_FORMAT" "$STORAGE_PARTITION_NAME" "$STORAGE_PARTITION_SIZE"
 
 # Image each partition with a system. Most will use the newer "createinstallmedia" command, but
@@ -94,3 +100,5 @@ asr --source "$OS_INSTALLER_BASE_PATH/Install OS X Mountain Lion.app/Contents/Sh
 # macOS v.10.13 ("High Sierra")
 "$OS_INSTALLER_BASE_PATH/Install macOS High Sierra.app/Contents/Resources/createinstallmedia" --applicationpath "$OS_INSTALLER_BASE_PATH/Install macOS High Sierra.app" --volume "/Volumes/$PARTITION7_NAME" --nointeraction
 
+# macOS v.10.14 ("Mojave")
+"$OS_INSTALLER_BASE_PATH/Install macOS Mojave.app/Contents/Resources/createinstallmedia" --applicationpath "$OS_INSTALLER_BASE_PATH/Install macOS Mojave.app" --volume "/Volumes/$PARTITION8_NAME" --nointeraction
