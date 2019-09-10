@@ -17,6 +17,19 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 
+
+# NUMBER_OF_PARTITIONS is the number of partitions to create on disk.
+# This should equal the number of system images that are being created + 1.
+NUMBER_OF_PARTITIONS=0
+
+OS_INSTALLERS=("Install Mac OS X Lion.app" "Install OS X Mountain Lion.app" "Install OS X Mavericks.app" "Install OS X Yosemite.app" "Install OS X El Capitan.app" "Install macOS Sierra.app" "Install macOS High Sierra.app" "Install macOS Mojave.app")
+
+# PARTITION_FORMAT is the format that each partition will be intialized in.
+# At this time, there is only 1 format that will be used (jhfs+), which is
+# Journaled HFS+
+PARTITION_FORMAT="jhfs+"
+
+
 check_root() {
     if [ `whoami` != "root" ]; then
         echo "Error: insufficient permissions - this script must be executed as root!"
@@ -29,7 +42,7 @@ check_root() {
 usage()
 {
 cat << EOF
-usage: $0 [ -f ] [ -v ] [ -p /path/to/installers ] -d diskIdentifier"
+usage: $0 [ -f ] [ -v ] [ -p /path/to/installers ] -d diskIdentifier
 
 This script will create multiple bootable Mac OS X / macOS volumes on a single disk.
 The script looks for installer images at the specified path (or in /Applications by default).
@@ -49,6 +62,106 @@ EXAMPLES:
     Create an installer on disk1 from installers at /Volumes/Storage/Applications (verbosely)
 	$0 -v -d disk1 -p /Volumes/Storage/Applications
 EOF
+}
+
+
+find_systems()
+{
+	i=0
+	for INSTALLER in "${OS_INSTALLERS[@]}"; do
+		if [ ! -z "$VERBOSE" ]; then
+			echo "Checking for system at path $OS_INSTALLER_BASE_PATH/$INSTALLER..."
+		fi
+		if [ ! -d "$OS_INSTALLER_BASE_PATH/$INSTALLER" ]; then
+			# if the installer doesn't exist, remove it from the OS_INSTALLERS array
+			unset OS_INSTALLERS[i]
+		else
+		 	if [ ! -z "$VERBOSE" ]; then
+				echo "Found OS installer at path: $OS_INSTALLER_BASE_PATH/$INSTALLER."
+			fi
+			NUMBER_OF_PARTITIONS=$(( $NUMBER_OF_PARTITIONS + 1))
+		fi
+		i=$(( $i + 1 ))
+	done
+	if [ ! -z "$VERBOSE" ]; then
+		echo "Found $NUMBER_OF_PARTITIONS OS installers: ${OS_INSTALLERS[@]}"
+	fi
+}
+
+restore_lion_disk()
+{
+	if [ ! -z "$VERBOSE" ]; then
+		asr --source "$1/Contents/SharedSupport/InstallESD.dmg" --target "$2" --erase --noprompt
+	else
+		asr --source "$1/Contents/SharedSupport/InstallESD.dmg" --target "$2" --erase --noprompt > /dev/null 2>&1
+	fi
+}
+
+restore_disk()
+{
+	if [ ! -z "$VERBOSE" ]; then
+		"$1/Contents/Resources/createinstallmedia" --applicationpath "$1" --volume "$2" --nointeraction
+	else
+		"$1/Contents/Resources/createinstallmedia" --applicationpath "$1" --volume "$2" --nointeraction > /dev/null 2>&1
+	fi
+}
+
+make_disk()
+{
+	# Each partition name must be specified when created. For safety, we are
+	# using random UUID values, which will help to avoid name collisions.
+	PARTITION_NAMES=()
+	for i in $(seq 0 $(( $NUMBER_OF_PARTITIONS - 1))); do
+		PARTITION_NAMES[$i]=`uuidgen`
+	done
+
+	# STORAGE_PARTITION_NAME is the name of the last partition of the disk
+	STORAGE_PARTITION_NAME="Storage"
+
+	# Each partition must have a size specified - 10GB is sufficient for each
+	# system partition. One additional "Storage" partition will round out the
+	# remaining storage on the disk (specified by the "R" diskutil SIZES value)
+	PARTITION_SIZE="10G"
+	STORAGE_PARTITION_SIZE="R"
+
+	# Create N partitions where N is the number of system images
+	# to be imaged/created on this disk
+	DISKUTIL_COMMAND="diskutil"
+	if [ -z "$VERBOSE" ]; then
+		DISKUTIL_COMMAND="${DISKUTIL_COMMAND} quiet"
+	fi
+	DISKUTIL_COMMAND="${DISKUTIL_COMMAND} partitionDisk /dev/$DISK $(( $NUMBER_OF_PARTITIONS + 1 )) GPTFormat"
+	for PARTITION_NAME in "${PARTITION_NAMES[@]}"; do
+		DISKUTIL_COMMAND="${DISKUTIL_COMMAND} $PARTITION_FORMAT $PARTITION_NAME $PARTITION_SIZE"
+	done
+	DISKUTIL_COMMAND="${DISKUTIL_COMMAND} $PARTITION_FORMAT $STORAGE_PARTITION_NAME $STORAGE_PARTITION_SIZE"
+
+	if [ ! -z "$VERBOSE" ]; then
+		echo "Running diskutil command: '$DISKUTIL_COMMAND' ..."
+		$DISKUTIL_COMMAND
+	else
+		$DISKUTIL_COMMAND > /dev/null 2>&1
+	fi
+
+	# Image each partition with a system. Most will use the newer "createinstallmedia" command, but
+	# older systems (such as Lion and Mountain Lion) will use asr to image the "InstallESD.dmg" file
+	# to the chosen partition
+	i=0
+	for INSTALLER in "${OS_INSTALLERS[@]}"; do
+		case $INSTALLER in
+			"Install Mac OS X Lion.app" | "Install OS X Mountain Lion.app")
+				restore_lion_disk "$OS_INSTALLER_BASE_PATH/$INSTALLER" "/Volumes/${PARTITION_NAMES[$i]}"
+				;;
+			"Install OS X Mavericks.app" | "Install OS X Yosemite.app" | "Install OS X El Capitan.app" | "Install macOS Sierra.app" | "Install macOS High Sierra.app" | "Install macOS Mojave.app")
+				restore_disk "$OS_INSTALLER_BASE_PATH/$INSTALLER" "/Volumes/${PARTITION_NAMES[$i]}"
+				;;
+			*)
+				echo "Error: unrecognized installer: $INSTALLER"
+				exit 1
+				;;
+		esac
+		i=$(( $i + 1 ))
+	done
 }
 
 
@@ -96,71 +209,6 @@ if [ -z "$OS_INSTALLER_BASE_PATH" ]; then
 	OS_INSTALLER_BASE_PATH="/Applications"
 fi
 
-# NUMBER_OF_PARTITIONS is the number of partitions to create on disk.
-# This should equal the number of system images that are being created + 1.
-NUMBER_OF_PARTITIONS=9
+find_systems
 
-# PARTITION_FORMAT is the format that each partition will be intialized in.
-# At this time, there is only 1 format that will be used (jhfs+), which is
-# Journaled HFS+
-PARTITION_FORMAT="jhfs+"
-
-# Each partition name must be specified when created. For safety, we are
-# using random UUID values, which will help to avoid name collisions.
-PARTITION1_NAME=`uuidgen`
-PARTITION2_NAME=`uuidgen`
-PARTITION3_NAME=`uuidgen`
-PARTITION4_NAME=`uuidgen`
-PARTITION5_NAME=`uuidgen`
-PARTITION6_NAME=`uuidgen`
-PARTITION7_NAME=`uuidgen`
-PARTITION8_NAME=`uuidgen`
-STORAGE_PARTITION_NAME="Storage"
-
-# Each partition must have a size specified - 10GB is sufficient for each
-# system partition. One additional "Storage" partition will round out the
-# remaining storage on the disk (specified by the "R" diskutil SIZES value)
-PARTITION_SIZE="10G"
-STORAGE_PARTITION_SIZE="R"
-
-# Create N partitions where N is the number of system images
-# to be imaged/created on this disk
-
-diskutil partitionDisk "/dev/$DISK" "$NUMBER_OF_PARTITIONS" GPTFormat \
-"$PARTITION_FORMAT" "$PARTITION1_NAME" "$PARTITION_SIZE" \
-"$PARTITION_FORMAT" "$PARTITION2_NAME" "$PARTITION_SIZE" \
-"$PARTITION_FORMAT" "$PARTITION3_NAME" "$PARTITION_SIZE" \
-"$PARTITION_FORMAT" "$PARTITION4_NAME" "$PARTITION_SIZE" \
-"$PARTITION_FORMAT" "$PARTITION5_NAME" "$PARTITION_SIZE" \
-"$PARTITION_FORMAT" "$PARTITION6_NAME" "$PARTITION_SIZE" \
-"$PARTITION_FORMAT" "$PARTITION7_NAME" "$PARTITION_SIZE" \
-"$PARTITION_FORMAT" "$PARTITION8_NAME" "$PARTITION_SIZE" \
-"$PARTITION_FORMAT" "$STORAGE_PARTITION_NAME" "$STORAGE_PARTITION_SIZE"
-
-# Image each partition with a system. Most will use the newer "createinstallmedia" command, but
-# older systems (such as Lion and Mountain Lion) will use asr to image the "InstallESD.dmg" file
-# to the chosen partition
-
-# Mac OS X v.10.7 ("Lion")
-asr --source "$OS_INSTALLER_BASE_PATH/Install Mac OS X Lion.app/Contents/SharedSupport/InstallESD.dmg" --target "/Volumes/$PARTITION1_NAME" --erase --noprompt
-
-# OS X v.10.8 ("Mountain Lion")
-asr --source "$OS_INSTALLER_BASE_PATH/Install OS X Mountain Lion.app/Contents/SharedSupport/InstallESD.dmg" --target "/Volumes/$PARTITION2_NAME" --erase --noprompt
-
-# OS X v.10.9 ("Mavericks")
-"$OS_INSTALLER_BASE_PATH/Install OS X Mavericks.app/Contents/Resources/createinstallmedia" --applicationpath "$OS_INSTALLER_BASE_PATH/Install OS X Mavericks.app" --volume "/Volumes/$PARTITION3_NAME" --nointeraction
-
-# OS X v.10.10 ("Yosemite")
-"$OS_INSTALLER_BASE_PATH/Install OS X Yosemite.app/Contents/Resources/createinstallmedia" --applicationpath "$OS_INSTALLER_BASE_PATH/Install OS X Yosemite.app" --volume "/Volumes/$PARTITION4_NAME" --nointeraction
-
-# OS X v.10.11 ("El Capitan")
-"$OS_INSTALLER_BASE_PATH/Install OS X El Capitan.app/Contents/Resources/createinstallmedia" --applicationpath "$OS_INSTALLER_BASE_PATH/Install OS X El Capitan.app" --volume "/Volumes/$PARTITION5_NAME" --nointeraction
-
-# macOS v.10.12 ("Sierra")
-"$OS_INSTALLER_BASE_PATH/Install macOS Sierra.app/Contents/Resources/createinstallmedia" --applicationpath "$OS_INSTALLER_BASE_PATH/Install macOS Sierra.app" --volume "/Volumes/$PARTITION6_NAME" --nointeraction
-
-# macOS v.10.13 ("High Sierra")
-"$OS_INSTALLER_BASE_PATH/Install macOS High Sierra.app/Contents/Resources/createinstallmedia" --applicationpath "$OS_INSTALLER_BASE_PATH/Install macOS High Sierra.app" --volume "/Volumes/$PARTITION7_NAME" --nointeraction
-
-# macOS v.10.14 ("Mojave")
-"$OS_INSTALLER_BASE_PATH/Install macOS Mojave.app/Contents/Resources/createinstallmedia" --volume "/Volumes/$PARTITION8_NAME" --nointeraction
+make_disk
